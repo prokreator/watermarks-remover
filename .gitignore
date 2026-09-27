@@ -4,6 +4,8 @@
 /*
 !/.claude-plugin/
 !/.claude-plugin/**
+!/axs-resale-bot/
+!/axs-resale-bot/**
 !/hooks/
 !/hooks/**
 !/.github/
@@ -37,6 +39,7 @@
 
 # Exceptions even inside allowed trees
 .env
+axs-resale-bot/browser-profile/
 **/__pycache__/
 *.pyc
 .venv/
