@@ -64,7 +64,7 @@ class Config:
 
     @classmethod
     def from_env(cls) -> Config:
-        load_dotenv(HERE / ".env")
+        load_dotenv(HERE / ".env", encoding="utf-8-sig")
         missing = [
             k
             for k in ("TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID", "AXS_EVENT_URL")
@@ -388,7 +388,8 @@ async def main() -> None:
         )
         if not confirmed:
             sys.exit(
-                "Could not message you on Telegram: check TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID."
+                "Could not message you on Telegram. Run test_telegram.bat "
+                "(or python test_telegram.py) to see exactly why."
             )
         log.info("Telegram confirmed; watching %s", cfg.event_url)
         await asyncio.gather(w.loop(), w.handle_commands())

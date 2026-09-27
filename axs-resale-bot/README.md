@@ -140,6 +140,21 @@ the token or chat ID is wrong.
 
 ## Troubleshooting
 
+### No notifications on my phone
+
+Double-click **`test_telegram.bat`** (or run `python test_telegram.py`). It
+checks the `.env` file, token, chat ID and connection one by one, prints the
+fix for the first problem it finds, and sends a test message if everything
+is correct.
+
+- **Test message arrives but the phone doesn't buzz:** it's a phone setting.
+  Unmute the bot chat, turn on Telegram notifications (in Telegram and in the
+  phone's settings), allow Telegram through Do Not Disturb or Focus, set
+  battery use to Unrestricted on Android, and close Telegram Desktop or Web
+  on the RDP, which takes the notifications instead of your phone.
+- **Test works but no ticket alerts:** that's expected until a standing resale
+  ticket is actually listed. Tap 📊 Status to check the bot is running.
+
 - **Never alerts, but I can see standing tickets on AXS:** tap 📸 Screenshot.
   If the screenshot shows them, AXS's wording differs, so copy the exact label
   (e.g. `GA Standing`) into `MATCH_KEYWORDS`. If the screenshot doesn't show

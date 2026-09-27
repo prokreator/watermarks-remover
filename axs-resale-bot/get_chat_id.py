@@ -12,7 +12,7 @@ from pathlib import Path
 import httpx
 from dotenv import load_dotenv
 
-load_dotenv(Path(__file__).resolve().parent / ".env")
+load_dotenv(Path(__file__).resolve().parent / ".env", encoding="utf-8-sig")
 token = os.getenv("TELEGRAM_BOT_TOKEN")
 if not token:
     sys.exit("Set TELEGRAM_BOT_TOKEN in .env first.")
