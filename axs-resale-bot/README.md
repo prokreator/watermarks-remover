@@ -16,6 +16,51 @@ and a screenshot, so you can buy it on your phone.
 
 ---
 
+## Run it from the web (recommended): GitHub Actions, every 5 minutes
+
+This setup needs no RDP and no PC left on. GitHub's servers open the AXS
+page every 5 minutes and message you on Telegram. Everything is set up on
+github.com.
+
+1. **Create the bot:** follow step 1 below (BotFather), then get your chat ID.
+   The easiest way is to message **@userinfobot** in Telegram. It replies with
+   your ID.
+2. **Add the secrets:** on GitHub, open the repo → **Settings → Secrets and
+   variables → Actions → New repository secret**. Add:
+   - `TELEGRAM_BOT_TOKEN`: the token from BotFather
+   - `TELEGRAM_CHAT_ID`: your chat ID
+3. **Optional variables:** on the same page, open the **Variables** tab.
+   - `AXS_EVENT_URL`: defaults to the Asake page. If the AXS Official Resale
+     listings for the show are on a different page, paste that link here.
+   - `MATCH_KEYWORDS`: defaults to `standing`.
+   - `MAX_PRICE`: a price cap in £.
+   - `EVENT_NAME`: the name shown in your Telegram messages.
+4. **Put the workflow on the default branch:** scheduled workflows only run
+   from `main`, so merge the PR that adds `.github/workflows/axs-resale-watch.yml`.
+5. **Start it:** open the **Actions** tab, choose **AXS resale watch**, then
+   click **Run workflow**. Within about 2 minutes Telegram should show
+   **"✅ Bot is online (cloud, every ~5 min)"**. After that it runs by itself
+   every 5 minutes.
+6. **Stop it:** in the Actions tab, open **AXS resale watch**, click **⋯**
+   and choose **Disable workflow**. Or tap **⏸ Pause** in Telegram.
+
+How it behaves in this mode:
+- The buttons (📊 Status, 🔍 Check now, 📸 Screenshot, ⏸ Pause, ▶️ Resume)
+  still work, but the bot answers on its **next run**, within about 5 minutes.
+- GitHub may start a scheduled run a few minutes late when it's busy, so
+  "every 5 min" can sometimes be every 6–10 minutes.
+- **Cost:** free on a **public** repo. On a **private** repo, each run uses
+  about 2 of the 2,000 free minutes a month, which runs out in about 4 days.
+  If this repo is private, put `axs-resale-bot/` and the workflow in a new
+  public repo. Your token stays private in Secrets either way.
+- AXS may show bot checks to GitHub's servers. If you keep getting 🚧
+  messages, use the RDP or PC setup below instead, ideally on a UK home
+  connection.
+
+---
+
+## Or run it on an RDP / PC
+
 ## Step 1: Create the bot in BotFather
 
 1. In Telegram, open **@BotFather** and send `/newbot`.

@@ -9,6 +9,13 @@ It does NOT auto-purchase: AXS checkout sits behind a queue, captcha and a
 logged-in payment step, and automating that breaks the AXS terms of use.
 Speed comes from the alert; the buying is done by you.
 
+Two ways to run it:
+    python bot.py          - stays running and checks every CHECK_INTERVAL seconds
+    python bot.py --once   - one check then exit, for a scheduler such as the
+                             GitHub Actions workflow (every 5 minutes). Button
+                             presses are answered on the next run. State is
+                             kept in STATE_FILE between runs.
+
 Telegram commands (only accepted from TELEGRAM_CHAT_ID; also on the button keyboard):
     /status  - current state and last check time
     /check   - run a check right now
@@ -22,6 +29,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import hashlib
+import json
 import logging
 import os
 import random
@@ -209,11 +217,11 @@ class Telegram:
         except httpx.HTTPError as e:
             log.warning("Telegram photo failed: %s", e)
 
-    async def commands(self) -> list[str]:
+    async def commands(self, wait: int = 30) -> list[str]:
         """Long-poll for new messages; return commands sent from our chat only."""
         try:
             r = await self.http.get(
-                f"{self.base}/getUpdates", params={"offset": self.offset, "timeout": 30}
+                f"{self.base}/getUpdates", params={"offset": self.offset, "timeout": wait}
             )
             updates = r.json().get("result", [])
         except (httpx.HTTPError, ValueError) as e:
@@ -366,10 +374,95 @@ class Watcher:
                         await self.tg.photo(await self.page.screenshot(), self.page.url)
 
 
+# ---------------------------------------------------------------- one-shot mode
+
+STATE_FIELDS = (
+    "paused",
+    "last_check",
+    "last_status",
+    "last_alert_fp",
+    "blocked_alerted",
+    "consecutive_errors",
+    "checks",
+)
+
+
+def load_state(path: Path) -> dict:
+    try:
+        return json.loads(path.read_text())
+    except (OSError, ValueError):
+        return {}
+
+
+def save_state(path: Path, w: Watcher, tg: Telegram) -> None:
+    data = {f: getattr(w, f) for f in STATE_FIELDS}
+    data["offset"] = tg.offset
+    path.write_text(json.dumps(data))
+
+
+async def run_once(cfg: Config, tg: Telegram) -> None:
+    """One check per run. Used by the scheduled GitHub Actions workflow."""
+    state_path = Path(os.getenv("STATE_FILE", str(HERE / "state.json")))
+    state = load_state(state_path)
+    first_run = not state
+    tg.offset = state.get("offset", 0)
+
+    from playwright.async_api import async_playwright
+
+    async with async_playwright() as pw:
+        w = Watcher(cfg, tg)
+        for f in STATE_FIELDS:
+            if f in state:
+                setattr(w, f, state[f])
+
+        if first_run:
+            await tg.set_menu()
+            ok = await tg.send(
+                f"✅ Bot is online (cloud, every ~5 min).\n\n"
+                f"Event: {cfg.event_name}\n"
+                f"Watching for: {', '.join(cfg.match_keywords)}"
+                f"{f' up to £{cfg.max_price:g}' if cfg.max_price else ''}\n\n"
+                f"Buttons are answered on the next run (within ~5 min).",
+                KEYBOARD,
+            )
+            if not ok:
+                sys.exit("Could not message you on Telegram. Check the two TELEGRAM secrets.")
+
+        cmds = await tg.commands(wait=0)
+        if "/pause" in cmds:
+            w.paused = True
+            await tg.send("⏸ Paused. Tap ▶️ Resume to continue.")
+        if "/resume" in cmds:
+            w.paused = False
+            await tg.send("▶️ Resumed.")
+        if {"/start", "/help"} & set(cmds):
+            await tg.send("Buttons are below. Replies come on the next run (~5 min).", KEYBOARD)
+
+        manual = "/check" in cmds
+        if not w.paused or manual or "/shot" in cmds:
+            await w.start_browser(pw)
+            await w.check(manual=manual)
+            if "/shot" in cmds and w.page:
+                await tg.photo(await w.page.screenshot(), w.page.url)
+        if "/status" in cmds:
+            ago = f"{int(time.time() - w.last_check)}s ago" if w.last_check else "never"
+            await tg.send(
+                f"{'⏸ Paused' if w.paused else '▶️ Watching'}: {cfg.event_name}\n"
+                f"Last check: {ago} ({w.last_status})\nChecks run: {w.checks}\n"
+                f"Keywords: {', '.join(cfg.match_keywords)}\n"
+                f"Max price: {cfg.max_price or 'any'}\n{cfg.event_url}",
+                buy_button(cfg.event_url),
+            )
+        save_state(state_path, w, tg)
+
+
 async def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     cfg = Config.from_env()
     tg = Telegram(cfg.token, cfg.chat_id)
+    if "--once" in sys.argv:
+        await run_once(cfg, tg)
+        return
 
     from playwright.async_api import async_playwright
 

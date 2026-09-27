@@ -40,6 +40,7 @@
 # Exceptions even inside allowed trees
 .env
 axs-resale-bot/browser-profile/
+axs-resale-bot/state.json
 **/__pycache__/
 *.pyc
 .venv/
