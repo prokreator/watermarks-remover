@@ -9,7 +9,7 @@ It does NOT auto-purchase: AXS checkout sits behind a queue, captcha and a
 logged-in payment step, and automating that breaks the AXS terms of use.
 Speed comes from the alert; the buying is done by you.
 
-Telegram commands (only accepted from TELEGRAM_CHAT_ID):
+Telegram commands (only accepted from TELEGRAM_CHAT_ID; also on the button keyboard):
     /status  - current state and last check time
     /check   - run a check right now
     /pause   - stop checking
@@ -53,6 +53,7 @@ class Config:
     token: str
     chat_id: str
     event_url: str
+    event_name: str
     match_keywords: list[str]
     blocked_phrases: list[str]
     max_price: float | None
@@ -76,6 +77,7 @@ class Config:
             token=os.environ["TELEGRAM_BOT_TOKEN"],
             chat_id=os.environ["TELEGRAM_CHAT_ID"].strip(),
             event_url=os.environ["AXS_EVENT_URL"].strip(),
+            event_name=os.getenv("EVENT_NAME", "").strip() or "your AXS event",
             match_keywords=_csv(os.getenv("MATCH_KEYWORDS", "standing,general admission")),
             blocked_phrases=_csv(os.getenv("BLOCKED_PHRASES", DEFAULT_BLOCKED)),
             max_price=float(max_price) if max_price else None,
@@ -139,6 +141,36 @@ def analyse(text: str, cfg: Config) -> Result:
 # ---------------------------------------------------------------- telegram
 
 
+# Buttons shown under the chat box; tapping one sends its text to the bot.
+BUTTONS = {
+    "📊 Status": "/status",
+    "🔍 Check now": "/check",
+    "📸 Screenshot": "/shot",
+    "⏸ Pause": "/pause",
+    "▶️ Resume": "/resume",
+}
+KEYBOARD = {
+    "keyboard": [
+        [{"text": "📊 Status"}, {"text": "🔍 Check now"}],
+        [{"text": "📸 Screenshot"}, {"text": "⏸ Pause"}, {"text": "▶️ Resume"}],
+    ],
+    "resize_keyboard": True,
+    "is_persistent": True,
+}
+MENU_COMMANDS = [
+    {"command": "status", "description": "Watching or paused, last check"},
+    {"command": "check", "description": "Check for tickets right now"},
+    {"command": "shot", "description": "Screenshot of the page"},
+    {"command": "pause", "description": "Stop checking"},
+    {"command": "resume", "description": "Start checking again"},
+    {"command": "help", "description": "Show commands and buttons"},
+]
+
+
+def buy_button(url: str) -> dict:
+    return {"inline_keyboard": [[{"text": "🎟️ BUY NOW ON AXS", "url": url}]]}
+
+
 class Telegram:
     def __init__(self, token: str, chat_id: str) -> None:
         self.chat_id = chat_id
@@ -146,14 +178,26 @@ class Telegram:
         self.http = httpx.AsyncClient(timeout=40)
         self.offset = 0
 
-    async def send(self, text: str) -> None:
+    async def send(self, text: str, markup: dict | None = None) -> bool:
+        body = {"chat_id": self.chat_id, "text": text, "disable_web_page_preview": True}
+        if markup:
+            body["reply_markup"] = markup
         try:
-            await self.http.post(
-                f"{self.base}/sendMessage",
-                data={"chat_id": self.chat_id, "text": text, "disable_web_page_preview": "true"},
-            )
-        except httpx.HTTPError as e:
+            r = await self.http.post(f"{self.base}/sendMessage", json=body)
+            ok = r.json().get("ok", False)
+            if not ok:
+                log.warning("Telegram refused message: %s", r.text)
+            return ok
+        except (httpx.HTTPError, ValueError) as e:
             log.warning("Telegram send failed: %s", e)
+            return False
+
+    async def set_menu(self) -> None:
+        """Fill the Telegram "Menu" button with our commands (same as BotFather /setcommands)."""
+        try:
+            await self.http.post(f"{self.base}/setMyCommands", json={"commands": MENU_COMMANDS})
+        except httpx.HTTPError as e:
+            log.warning("Telegram setMyCommands failed: %s", e)
 
     async def photo(self, png: bytes, caption: str = "") -> None:
         try:
@@ -183,7 +227,9 @@ class Telegram:
             if str(msg.get("chat", {}).get("id")) != self.chat_id:
                 continue  # ignore strangers who find the bot
             text = (msg.get("text") or "").strip()
-            if text.startswith("/"):
+            if text in BUTTONS:
+                out.append(BUTTONS[text])
+            elif text.startswith("/"):
                 out.append(text.split()[0].split("@")[0].lower())
         return out
 
@@ -260,7 +306,9 @@ class Watcher:
                     self.last_alert_fp = result.fingerprint
                     lines = "\n".join(f"• {m}" for m in result.matches[:8])
                     await self.tg.send(
-                        f"🎟️ RESALE TICKETS FOUND!\n\n{lines}\n\nBuy now 👉 {self.cfg.event_url}"
+                        f"🎟️ RESALE TICKETS FOUND!\n{self.cfg.event_name}\n\n{lines}\n\n"
+                        f"👉 {self.cfg.event_url}",
+                        buy_button(self.cfg.event_url),
                     )
                     await self.tg.photo(await self.page.screenshot(full_page=True))
                     # A second nudge so your phone buzzes twice.
@@ -285,18 +333,23 @@ class Watcher:
         while True:
             for cmd in await self.tg.commands():
                 if cmd in ("/start", "/help"):
-                    await self.tg.send(__doc__.split("Telegram commands")[1].strip())
+                    await self.tg.send(
+                        "Tap the buttons below, or use the Menu button.\n\n"
+                        + __doc__.split("Telegram commands")[1].split(":", 1)[1].strip(),
+                        KEYBOARD,
+                    )
                 elif cmd == "/status":
                     ago = (
                         f"{int(time.time() - self.last_check)}s ago" if self.last_check else "never"
                     )
                     await self.tg.send(
-                        f"{'⏸ Paused' if self.paused else '▶️ Watching'}\n"
+                        f"{'⏸ Paused' if self.paused else '▶️ Watching'}: {self.cfg.event_name}\n"
                         f"Last check: {ago} ({self.last_status})\n"
                         f"Checks run: {self.checks}\n"
                         f"Keywords: {', '.join(self.cfg.match_keywords)}\n"
                         f"Max price: {self.cfg.max_price or 'any'}\n"
-                        f"Every ~{self.cfg.interval}s\n{self.cfg.event_url}"
+                        f"Every ~{self.cfg.interval}s\n{self.cfg.event_url}",
+                        buy_button(self.cfg.event_url),
                     )
                 elif cmd == "/check":
                     await self.tg.send("Checking…")
@@ -323,9 +376,21 @@ async def main() -> None:
     async with async_playwright() as pw:
         w = Watcher(cfg, tg)
         await w.start_browser(pw)
-        await tg.send(
-            f"✅ Watching {cfg.event_url}\nfor: {', '.join(cfg.match_keywords)}. Send /help for commands."
+        await tg.set_menu()
+        confirmed = await tg.send(
+            f"✅ Bot is online and connected.\n\n"
+            f"Event: {cfg.event_name}\n"
+            f"Watching for: {', '.join(cfg.match_keywords)}"
+            f"{f' up to £{cfg.max_price:g}' if cfg.max_price else ''}\n"
+            f"Checking every ~{cfg.interval}s.\n\n"
+            f"Tap 🔍 Check now to test it.",
+            KEYBOARD,
         )
+        if not confirmed:
+            sys.exit(
+                "Could not message you on Telegram: check TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID."
+            )
+        log.info("Telegram confirmed; watching %s", cfg.event_url)
         await asyncio.gather(w.loop(), w.handle_commands())
 
 

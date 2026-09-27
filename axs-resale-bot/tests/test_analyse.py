@@ -11,6 +11,7 @@ def cfg(max_price=None, keywords="standing,general admission"):
         token="t",  # noqa: S106
         chat_id="1",
         event_url="https://example.test",
+        event_name="Test",
         match_keywords=_csv(keywords),
         blocked_phrases=_csv(DEFAULT_BLOCKED),
         max_price=max_price,
